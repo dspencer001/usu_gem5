@@ -701,9 +701,6 @@ InstructionQueue<Impl>::addToOrderList(OpClass op_class)
 
     readyIt[op_class] = listOrder.insert(list_it, queue_entry);
 
-    list_it2 = listOrder.begin();
-    list_end_it2 = listOrder.end();
-
     queueOnList[op_class] = true;
 }
 
