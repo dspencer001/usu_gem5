@@ -34,7 +34,7 @@ parser.add_option("-b", "--benchmark", default="",
 parser.add_option("--chkpt", default="",
                  help="The checkpoint to load.")
 
-parser.add_option("--issue-width", default="", 
+parser.add_option("--issue-width", default="",
                  help="The issue width of the o3 cpu")
 
 execfile(os.path.join(config_root, "common", "Options.py"))
@@ -124,20 +124,22 @@ if options.chkpt != "":
 if options.issue_width != "":
   FutureClass.issueWidth = options.issue_width
 
+FutureClass.numROBEntries = 192
+FutureClass.numIQEntries = 96
 CPUClass.clock = '1.0GHz'
 
-#np = options.num_cpus 
+#np = options.num_cpus
 np = 1
 
 system = System(cpu = [CPUClass(cpu_id=i) for i in xrange(np)],
                 physmem = SimpleMemory(range=AddrRange("2048MB")),
-                membus = CoherentBus(), mem_mode = 'atomic')
+                membus = CoherentBus())
 
 #system.physmem.port = system.membus.port
 system.physmem.port = system.membus.master
 system.system_port = system.membus.slave
 
-for i in xrange(np):   
+for i in xrange(np):
 #    if options.caches:
 #        system.cpu[i].addPrivateSplitL1Caches(L1Cache(size = '64kB'),
 #                                              L1Cache(size = '64kB'))

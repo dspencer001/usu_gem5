@@ -673,15 +673,37 @@ InstructionQueue<Impl>::addToOrderList(OpClass op_class)
     ListOrderIt list_it = listOrder.begin();
     ListOrderIt list_end_it = listOrder.end();
 
-    while (list_it != list_end_it) {
-        if ((*list_it).oldestInst > queue_entry.oldestInst) {
-            break;
+    //################## DAVID/SAM CODE STARTS HERE ###################
+    if (op_class == MemReadOp) {
+        while (list_it != list_end_it) {
+          if (
+               ((*list_it).queueType != MemReadOp) ||
+                ((*list_it).oldestInst > queue_entry.oldestInst)
+               ) {
+                break;
+            }
+          
+            list_it++;
         }
+    } else {
+        while (list_it != list_end_it) {
+            if (
+                ((*list_it).queueType != MemReadOp) &&
+                (*list_it).oldestInst > queue_entry.oldestInst) {
+                break;
+            }
 
-        list_it++;
+            list_it++;
+        }
     }
 
+    //################## DAVID/SAM CODE ENDS HERE ###################
+
     readyIt[op_class] = listOrder.insert(list_it, queue_entry);
+
+    list_it2 = listOrder.begin();
+    list_end_it2 = listOrder.end();
+
     queueOnList[op_class] = true;
 }
 
@@ -703,10 +725,23 @@ InstructionQueue<Impl>::moveToYoungerInst(ListOrderIt list_order_it)
     queue_entry.queueType = op_class;
     queue_entry.oldestInst = readyInsts[op_class].top()->seqNum;
 
-    while (next_it != listOrder.end() &&
-           (*next_it).oldestInst < queue_entry.oldestInst) {
-        ++next_it;
+    //################## DAVID/SAM CODE STARTS HERE ###################
+
+    if (op_class == MemReadOp) {
+        while (next_it != listOrder.end() &&
+              ((*next_it).queueType == MemReadOp) &&
+              ((*next_it).oldestInst < queue_entry.oldestInst)) {
+              ++next_it;
+        }
+    } else {
+        while (next_it != listOrder.end() &&
+              (((*next_it).queueType == MemReadOp) ||
+              ((*next_it).oldestInst < queue_entry.oldestInst))) {
+              ++next_it;
+        }
     }
+
+    //################## DAVID/SAM CODE ENDS HERE ###################
 
     readyIt[op_class] = listOrder.insert(next_it, queue_entry);
 }
