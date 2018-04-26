@@ -49,6 +49,7 @@ StridePrefetcher::calculatePrefetch(PacketPtr &pkt, std::list<Addr> &addresses,
 
     Addr blk_addr = pkt->getAddr() & ~(Addr)(blkSize-1);
     MasterID master_id = useMasterId ? pkt->req->masterId() : 0;
+
     Addr pc = pkt->req->getPC();
     assert(master_id < Max_Contexts);
     std::list<StrideEntry*> &tab = table[master_id];
@@ -81,7 +82,7 @@ StridePrefetcher::calculatePrefetch(PacketPtr &pkt, std::list<Addr> &addresses,
 
         (*iter)->missAddr = blk_addr;
 
-        if ((*iter)->confidence <= 0)
+        if ((*iter)->confidence <= 1)
             return;
 
         for (int d = 1; d <= degree; d++) {

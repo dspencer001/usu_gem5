@@ -41,6 +41,15 @@
 
 class GHBPrefetcher : public BasePrefetcher
 {
+  public:
+    struct StrideEntry {
+        Addr prev_miss_addr;
+        Addr miss_pc;
+        Addr miss_addr;
+        std::vector<StrideEntry>::iterator next;
+        StrideEntry() : prev_miss_addr(0), miss_pc(0), miss_addr(0) {}
+    };
+
   protected:
 
     static const int Max_Masters = 64;
@@ -48,10 +57,28 @@ class GHBPrefetcher : public BasePrefetcher
     Addr secondLastMissAddr[Max_Masters];
     Addr lastMissAddr[Max_Masters];
 
+    std::map<Addr, std::vector<StrideEntry>::iterator> index_tables[Max_Masters];
+    std::vector<StrideEntry> ghbs[Max_Masters];
+    std::vector<StrideEntry>::iterator heads[Max_Masters];
+
+    void insertEntry(Addr pc, Addr blk_addr, MasterID master_id);
+    std::vector<StrideEntry>::iterator addressListEnd(std::vector<StrideEntry>::iterator it, MasterID master_id);
+    std::pair<int, Addr> getStride(Addr pc, MasterID master_id);
+
+
   public:
     GHBPrefetcher(const Params *p)
         : BasePrefetcher(p)
     {
+      for(int i = 0; i < Max_Masters; i++) {
+        for(int j = 0; j < 512; j++)
+        {
+          StrideEntry new_entry = {};
+          ghbs[i].push_back(new_entry);
+        }
+
+        heads[i] = ghbs[i].begin();
+      }
     }
 
     ~GHBPrefetcher() {}
