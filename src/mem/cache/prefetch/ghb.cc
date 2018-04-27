@@ -51,74 +51,97 @@ GHBPrefetcher::calculatePrefetch(PacketPtr &pkt, std::list<Addr> &addresses,
     int master_id = useMasterId ? pkt->req->masterId() : 0;
     assert(master_id < Max_Masters);
     Addr pc = pkt->req->getPC();
+    std::vector<DeltaEntry> &ghb = ghbs[master_id];
 
-    insertEntry(pc, blk_addr, master_id);
+    std::vector<DeltaEntry>::iterator entry = insertEntry(pc, blk_addr, master_id);
 
-    std::pair<int, long long> stride_info = getStride(pc, master_id);
+    std::vector<DeltaEntry>::iterator match_iterator = deltaCorrelation(entry, master_id);
     
+    if(match_iterator == ghb.end()) {
+        DPRINTF(HWPrefetch, "miss: Master %d PC %x blk_addr %x prev_blk_addr %x delta %d\n", master_id, pc, blk_addr, entry->prev_miss_addr, (long long)(entry->miss_addr) - (long long)(entry->prev_miss_addr));
+        return;
+    }
 
-    DPRINTF(HWPrefetch, "hit: PC %x blk_addr %x stride %d, conf %d\n",
-                pc, blk_addr, stride_info.second, stride_info.first);
+    DPRINTF(HWPrefetch, "hit: Master %d PC %x blk_addr %x delta %d\n", master_id, pc, blk_addr, (long long)(entry->miss_addr) - (long long)(entry->prev_miss_addr));
 
-    if(stride_info.first >= 2)
-    {
-        for (int d = 1; d <= degree; d++) {
-            Addr new_addr = blk_addr + d * stride_info.second;
-            if (pageStop && !samePage(blk_addr, new_addr)) {
-                // Spanned the page, so now stop
-                pfSpanPage += degree - d + 1;
-                return;
-            } else {
-                DPRINTF(HWPrefetch, "  queuing prefetch to %x @ %d\n",
-                        new_addr, latency);
-                addresses.push_back(new_addr);
-                delays.push_back(latency);
-            }
+    long long delta = 0;
+    match_iterator++;
+
+    for(int d = 0; d < degree; d++) {
+        if(match_iterator->prev_miss_addr == 0) {
+            break;
+        }
+
+        delta += match_iterator->miss_addr - match_iterator->prev_miss_addr;
+        Addr new_addr = blk_addr + delta;
+
+        if (pageStop && !samePage(blk_addr, new_addr)) {
+            // Spanned the page, so now stop
+            pfSpanPage += degree - d + 1;
+            return;
+        } else {
+            DPRINTF(HWPrefetch, "  queuing prefetch to %x @ %d\n",
+                    new_addr, latency);
+            addresses.push_back(new_addr);
+            delays.push_back(latency);
         }
     }
 }
 
-void
+std::vector<GHBPrefetcher::DeltaEntry>::iterator
 GHBPrefetcher::insertEntry(const Addr pc, Addr blk_addr, MasterID master_id) {
-    std::map<Addr, std::vector<StrideEntry>::iterator> &index_table = index_tables[master_id];
-    std::vector<StrideEntry> &ghb = ghbs[master_id];
-    std::vector<StrideEntry>::iterator &head = heads[master_id];
-    std::map<Addr, std::vector<StrideEntry>::iterator>::iterator result;
+    std::map<long long, std::vector<DeltaEntry>::iterator> &index_table = index_tables[master_id];
+    std::vector<DeltaEntry> &ghb = ghbs[master_id];
+    std::vector<DeltaEntry>::iterator &head = heads[master_id];
+    std::vector<DeltaEntry>::iterator prev_head = heads[master_id];
+    std::vector<DeltaEntry>::iterator previous_it;
+    std::map<long long, std::vector<DeltaEntry>::iterator>::iterator result;
 
     if(head->miss_pc > 0) {
-        result = index_table.find(head->miss_pc);
+        long long head_delta = head->miss_addr - head->prev_miss_addr;
+        result = index_table.find(head_delta);
 
         assert(result != index_table.end());
 
         if(head->next != ghb.end()) {
             index_table.erase(result);
-            std::pair<Addr, std::vector<StrideEntry>::iterator> new_val(head->miss_pc, head->next);
-            index_table.insert(new_val);
+            index_table.insert(std::make_pair(head_delta, head->next));
         } else {
             index_table.erase(result);
         }
-    } 
+    }
+
+    if(head == ghb.begin()) {
+        previous_it = ghb.end() - 1;
+    } else {
+        previous_it = head - 1;
+    }
+
 
     head->miss_pc = pc;
     head->miss_addr = blk_addr;
     head->next = ghb.end();
     head->prev_miss_addr = 0;
 
-    result = index_table.find(head->miss_pc);
+    if(previous_it->miss_addr > 0) {
+        head->prev_miss_addr = previous_it->miss_addr;
+    }
+
+    long long head_delta = head->miss_addr - head->prev_miss_addr;
+
+    result = index_table.find(head_delta);
 
     // index hit
     if(result != index_table.end()) {
-        std::vector<StrideEntry>::iterator last_entry = addressListEnd(result->second, master_id);
+        std::vector<DeltaEntry>::iterator last_entry = addressListEnd(result->second, master_id);
 
         if(last_entry != head)
         {
             last_entry->next = head;
-            head->prev_miss_addr = last_entry->miss_addr;
         }
-
     } else {
         // index miss
-        index_table.insert(std::make_pair(pc, head));
+        index_table.insert(std::make_pair(head_delta, head));
     }
 
     head++;
@@ -126,10 +149,12 @@ GHBPrefetcher::insertEntry(const Addr pc, Addr blk_addr, MasterID master_id) {
     if (head == ghb.end()) {
         head = ghb.begin();
     }
+
+    return prev_head;
 }
 
-std::vector<GHBPrefetcher::StrideEntry>::iterator GHBPrefetcher::addressListEnd(std::vector<StrideEntry>::iterator it, MasterID master_id) {
-    const std::vector<StrideEntry> &ghb = ghbs[master_id];
+std::vector<GHBPrefetcher::DeltaEntry>::iterator GHBPrefetcher::addressListEnd(std::vector<DeltaEntry>::iterator it, MasterID master_id) {
+    const std::vector<DeltaEntry> &ghb = ghbs[master_id];
 
     while(it->next != ghb.end()) {
         it = it->next;
@@ -138,46 +163,78 @@ std::vector<GHBPrefetcher::StrideEntry>::iterator GHBPrefetcher::addressListEnd(
     return it;
 }
 
-std::pair<int, Addr> GHBPrefetcher::getStride(const Addr pc, MasterID master_id) {
-    std::map<Addr, std::vector<StrideEntry>::iterator> &index_table = index_tables[master_id];
-    std::vector<StrideEntry> &ghb = ghbs[master_id];
-    std::map<Addr, std::vector<StrideEntry>::iterator>::iterator result;
+std::vector<GHBPrefetcher::DeltaEntry>::iterator GHBPrefetcher::deltaCorrelation(
+    std::vector<DeltaEntry>::iterator entry,
+    MasterID master_id)
+{
+    std::map<long long, std::vector<DeltaEntry>::iterator> &index_table = index_tables[master_id];
+    std::vector<DeltaEntry> &ghb = ghbs[master_id];
+    std::map<long long, std::vector<DeltaEntry>::iterator>::iterator result;
+    std::vector<DeltaEntry>::iterator correlation_it = ghb.end();
 
-    int confidence = 0;
-    long long stride = 0;
-    Addr previous_stride = 0;
+    long long entry_delta = entry->miss_addr - entry->prev_miss_addr;
+    std::pair<bool, long long> entry_prev_result = getPreviousDelta(entry, master_id);
 
-    result = index_table.find(pc);
+    if(!entry_prev_result.first) {
+//        DPRINTF(
+//            HWPrefetch,
+//            "Didn't find a previous address: PC %x blk_addr %x\n",
+//            entry->miss_pc,
+//            entry->miss_addr
+//        );
+        return correlation_it;
+    }
+
+    result = index_table.find(entry_delta);
 
     assert(result != index_table.end());
 
-    std::vector<StrideEntry>::iterator it = result->second;
+    std::vector<DeltaEntry>::iterator it = result->second;
 
-    while(it != ghb.end()) {
-        if(it->prev_miss_addr > 0) {
-            if(it->miss_addr > it->prev_miss_addr)
-            {
-                stride = it->miss_addr - it->prev_miss_addr;
-            } else {
-                stride = (it->prev_miss_addr - it->miss_addr) * (-1);
-            }
+//    DPRINTF(
+//        HWPrefetch,
+//        "Looking for match of (%d, %d)\n",
+//        entry_delta,
+//        entry_prev_result.second
+//    );
+
+    while(it != ghb.end() && it != entry) {
+        std::pair<bool, long long> prev_delta_result = getPreviousDelta(it, master_id);
+//        DPRINTF(
+//            HWPrefetch,
+//            "Possible match: (%d, %d)\n",
+//            entry_delta,
+//            prev_delta_result.second
+//        );
+
+
+        if(prev_delta_result.first && prev_delta_result.second == entry_prev_result.second) {
+            correlation_it = it;
         }
-
-        //DPRINTF(HWPrefetch, "miss_addr: %x, prev_miss_addr: %x\n", it->miss_addr, it->prev_miss_addr);
-
-        if(stride != 0 && (stride == previous_stride)) {
-            confidence++;
-        } else {
-            confidence = 0;
-        }
-
-        previous_stride = stride;
+        
         it = it->next;
     }
 
-    return std::make_pair(confidence, stride);
+    return correlation_it;
 }
 
+std::pair<bool, long long>
+GHBPrefetcher::getPreviousDelta(std::vector<DeltaEntry>::iterator it, MasterID master_id) {
+  std::vector<DeltaEntry> &ghb = ghbs[master_id];
+  std::vector<DeltaEntry>::iterator previous_it;
+
+  if(it->prev_miss_addr > 0) {
+    if(it == ghb.begin()) {
+      previous_it = ghb.end() - 1;
+    } else {
+      previous_it = it - 1;
+    }
+
+    return std::make_pair(true, previous_it->miss_addr - previous_it->prev_miss_addr);
+  }
+
+  return std::make_pair(false, 0);
+}
 
 GHBPrefetcher*
 GHBPrefetcherParams::create()

@@ -52,8 +52,8 @@ def config_cache(options, system):
                                 block_size = options.cacheline_size)
 
         system.tol2bus = CoherentBus(clock = options.clock, width = 32)
-        #system.l2.prefetcher = GHBPrefetcher()
-        system.l2.prefetcher = StridePrefetcher()
+        system.l2.prefetcher = GHBPrefetcher()
+        #system.l2.prefetcher = StridePrefetcher()
         system.l2.cpu_side = system.tol2bus.master
         system.l2.mem_side = system.membus.slave
 
