@@ -58,11 +58,11 @@ GHBPrefetcher::calculatePrefetch(PacketPtr &pkt, std::list<Addr> &addresses,
     std::vector<DeltaEntry>::iterator match_iterator = deltaCorrelation(entry, master_id);
     
     if(match_iterator == ghb.end()) {
-        DPRINTF(HWPrefetch, "miss: Master %d PC %x blk_addr %x prev_blk_addr %x delta %d\n", master_id, pc, blk_addr, entry->prev_miss_addr, (long long)(entry->miss_addr) - (long long)(entry->prev_miss_addr));
+        DPRINTF(HWPrefetch, "miss: Master %d PC %x blk_addr %x prev_blk_addr %x delta %d ghb index %d\n", master_id, pc, blk_addr, entry->prev_miss_addr, (long long)(entry->miss_addr) - (long long)(entry->prev_miss_addr), entry - ghb.begin());
         return;
     }
 
-    DPRINTF(HWPrefetch, "hit: Master %d PC %x blk_addr %x delta %d\n", master_id, pc, blk_addr, (long long)(entry->miss_addr) - (long long)(entry->prev_miss_addr));
+    DPRINTF(HWPrefetch, "hit: Master %d PC %x blk_addr %x delta %d ghb index %d hit index %d\n", master_id, pc, blk_addr, (long long)(entry->miss_addr) - (long long)(entry->prev_miss_addr), entry - ghb.begin(), match_iterator - ghb.begin());
 
     long long delta = 0;
     match_iterator++;
