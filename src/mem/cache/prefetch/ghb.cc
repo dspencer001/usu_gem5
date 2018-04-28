@@ -55,24 +55,20 @@ GHBPrefetcher::calculatePrefetch(PacketPtr &pkt, std::list<Addr> &addresses,
 
     std::vector<DeltaEntry>::iterator entry = insertEntry(pc, blk_addr, master_id);
 
-    std::vector<DeltaEntry>::iterator match_iterator = deltaCorrelation(entry, master_id);
+    std::vector<long long> delta_chain = deltaCorrelation(entry, master_id);
     
-    if(match_iterator == ghb.end()) {
+    if(delta_chain.empty()) {
         DPRINTF(HWPrefetch, "miss: Master %d PC %x blk_addr %x prev_blk_addr %x delta %d ghb index %d\n", master_id, pc, blk_addr, entry->prev_miss_addr, (long long)(entry->miss_addr) - (long long)(entry->prev_miss_addr), entry - ghb.begin());
         return;
     }
 
-    DPRINTF(HWPrefetch, "hit: Master %d PC %x blk_addr %x delta %d ghb index %d hit index %d\n", master_id, pc, blk_addr, (long long)(entry->miss_addr) - (long long)(entry->prev_miss_addr), entry - ghb.begin(), match_iterator - ghb.begin());
+    DPRINTF(HWPrefetch, "hit: Master %d PC %x blk_addr %x delta %d ghb index %d \n", master_id, pc, blk_addr, (long long)(entry->miss_addr) - (long long)(entry->prev_miss_addr), entry - ghb.begin());
 
     long long delta = 0;
-    match_iterator++;
 
-    for(int d = 0; d < degree; d++) {
-        if(match_iterator->prev_miss_addr == 0) {
-            break;
-        }
-
-        delta += match_iterator->miss_addr - match_iterator->prev_miss_addr;
+    std::vector<long long>::iterator it = delta_chain.begin();
+    for(int d = 0; d < degree && (it != delta_chain.end()); d++, it++) {
+        delta += *it;
         Addr new_addr = blk_addr + delta;
 
         if (pageStop && !samePage(blk_addr, new_addr)) {
@@ -90,59 +86,40 @@ GHBPrefetcher::calculatePrefetch(PacketPtr &pkt, std::list<Addr> &addresses,
 
 std::vector<GHBPrefetcher::DeltaEntry>::iterator
 GHBPrefetcher::insertEntry(const Addr pc, Addr blk_addr, MasterID master_id) {
-    std::map<long long, std::vector<DeltaEntry>::iterator> &index_table = index_tables[master_id];
+    std::map<Addr, std::vector<DeltaEntry>::iterator> &index_table = index_tables[master_id];
     std::vector<DeltaEntry> &ghb = ghbs[master_id];
     std::vector<DeltaEntry>::iterator &head = heads[master_id];
     std::vector<DeltaEntry>::iterator prev_head = heads[master_id];
-    std::vector<DeltaEntry>::iterator previous_it;
-    std::map<long long, std::vector<DeltaEntry>::iterator>::iterator result;
+    std::map<Addr, std::vector<DeltaEntry>::iterator>::iterator result;
 
     if(head->miss_pc > 0) {
-        long long head_delta = head->miss_addr - head->prev_miss_addr;
-        result = index_table.find(head_delta);
+        result = index_table.find(head->miss_pc);
 
         assert(result != index_table.end());
 
-        if(head->next != ghb.end()) {
-            index_table.erase(result);
-            index_table.insert(std::make_pair(head_delta, head->next));
+        if(result->second != head) {
+            std::vector<DeltaEntry>::iterator prev_entry = addressListEnd(result->second, head);
+            prev_entry->next = ghb.end();
         } else {
             index_table.erase(result);
         }
     }
-
-    if(head == ghb.begin()) {
-        previous_it = ghb.end() - 1;
-    } else {
-        previous_it = head - 1;
-    }
-
 
     head->miss_pc = pc;
     head->miss_addr = blk_addr;
     head->next = ghb.end();
     head->prev_miss_addr = 0;
 
-    if(previous_it->miss_addr > 0) {
-        head->prev_miss_addr = previous_it->miss_addr;
-    }
-
-    long long head_delta = head->miss_addr - head->prev_miss_addr;
-
-    result = index_table.find(head_delta);
+    result = index_table.find(head->miss_pc);
 
     // index hit
     if(result != index_table.end()) {
-        std::vector<DeltaEntry>::iterator last_entry = addressListEnd(result->second, master_id);
-
-        if(last_entry != head)
-        {
-            last_entry->next = head;
-        }
-    } else {
-        // index miss
-        index_table.insert(std::make_pair(head_delta, head));
+        head->next = result->second;
+        head->prev_miss_addr = result->second->miss_addr;
+        index_table.erase(result);
     }
+
+    index_table.insert(std::make_pair(head->miss_pc, head));
 
     head++;
 
@@ -153,87 +130,59 @@ GHBPrefetcher::insertEntry(const Addr pc, Addr blk_addr, MasterID master_id) {
     return prev_head;
 }
 
-std::vector<GHBPrefetcher::DeltaEntry>::iterator GHBPrefetcher::addressListEnd(std::vector<DeltaEntry>::iterator it, MasterID master_id) {
-    const std::vector<DeltaEntry> &ghb = ghbs[master_id];
-
-    while(it->next != ghb.end()) {
+std::vector<GHBPrefetcher::DeltaEntry>::iterator GHBPrefetcher::addressListEnd(std::vector<DeltaEntry>::iterator it, std::vector<DeltaEntry>::iterator end_it) {
+    while(it->next != end_it) {
         it = it->next;
     }
 
     return it;
 }
 
-std::vector<GHBPrefetcher::DeltaEntry>::iterator GHBPrefetcher::deltaCorrelation(
+std::vector<long long> GHBPrefetcher::deltaCorrelation(
     std::vector<DeltaEntry>::iterator entry,
     MasterID master_id)
 {
-    std::map<long long, std::vector<DeltaEntry>::iterator> &index_table = index_tables[master_id];
     std::vector<DeltaEntry> &ghb = ghbs[master_id];
-    std::map<long long, std::vector<DeltaEntry>::iterator>::iterator result;
-    std::vector<DeltaEntry>::iterator correlation_it = ghb.end();
+    std::map<Addr, std::vector<DeltaEntry>::iterator>::iterator result;
+    std::vector<long long> delta_chain;
+    std::vector<DeltaEntry>::iterator prev_entry = entry->next;
 
-    long long entry_delta = entry->miss_addr - entry->prev_miss_addr;
-    std::pair<bool, long long> entry_prev_result = getPreviousDelta(entry, master_id);
-
-    if(!entry_prev_result.first) {
-//        DPRINTF(
-//            HWPrefetch,
-//            "Didn't find a previous address: PC %x blk_addr %x\n",
-//            entry->miss_pc,
-//            entry->miss_addr
-//        );
-        return correlation_it;
+    if(
+        prev_entry == ghb.end() ||
+        prev_entry->next == ghb.end() ||
+        prev_entry->next->next == ghb.end()
+    ) {
+        return delta_chain;
     }
 
-    result = index_table.find(entry_delta);
+    long long delta_1 = entry->miss_addr - entry->next->miss_addr;
+    long long delta_2 = prev_entry->miss_addr - prev_entry->next->miss_addr;
 
-    assert(result != index_table.end());
+    bool matched = false;
 
-    std::vector<DeltaEntry>::iterator it = result->second;
+    do {
+        entry = prev_entry;
+        prev_entry = prev_entry->next;
 
-//    DPRINTF(
-//        HWPrefetch,
-//        "Looking for match of (%d, %d)\n",
-//        entry_delta,
-//        entry_prev_result.second
-//    );
+        long long entry_delta = entry->miss_addr - entry->next->miss_addr;
+        long long prev_delta = prev_entry->miss_addr - prev_entry->next->miss_addr;
 
-    while(it != ghb.end() && it != entry) {
-        std::pair<bool, long long> prev_delta_result = getPreviousDelta(it, master_id);
-//        DPRINTF(
-//            HWPrefetch,
-//            "Possible match: (%d, %d)\n",
-//            entry_delta,
-//            prev_delta_result.second
-//        );
-
-
-        if(prev_delta_result.first && prev_delta_result.second == entry_prev_result.second) {
-            correlation_it = it;
+        if(entry_delta == delta_1 && prev_delta == delta_2) {
+            matched = true;
+        } else {
+            delta_chain.push_back(entry_delta);
         }
         
-        it = it->next;
+    } while(!matched && (prev_entry->next != ghb.end()));
+
+    std::reverse(delta_chain.begin(), delta_chain.end());
+
+    if(matched) {
+        delta_chain.push_back(delta_2);
+        delta_chain.push_back(delta_1);
     }
 
-    return correlation_it;
-}
-
-std::pair<bool, long long>
-GHBPrefetcher::getPreviousDelta(std::vector<DeltaEntry>::iterator it, MasterID master_id) {
-  std::vector<DeltaEntry> &ghb = ghbs[master_id];
-  std::vector<DeltaEntry>::iterator previous_it;
-
-  if(it->prev_miss_addr > 0) {
-    if(it == ghb.begin()) {
-      previous_it = ghb.end() - 1;
-    } else {
-      previous_it = it - 1;
-    }
-
-    return std::make_pair(true, previous_it->miss_addr - previous_it->prev_miss_addr);
-  }
-
-  return std::make_pair(false, 0);
+    return delta_chain;
 }
 
 GHBPrefetcher*

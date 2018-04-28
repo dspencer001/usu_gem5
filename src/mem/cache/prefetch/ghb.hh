@@ -57,14 +57,13 @@ class GHBPrefetcher : public BasePrefetcher
     Addr secondLastMissAddr[Max_Masters];
     Addr lastMissAddr[Max_Masters];
 
-    std::map<long long, std::vector<DeltaEntry>::iterator> index_tables[Max_Masters];
+    std::map<Addr, std::vector<DeltaEntry>::iterator> index_tables[Max_Masters];
     std::vector<DeltaEntry> ghbs[Max_Masters];
     std::vector<DeltaEntry>::iterator heads[Max_Masters];
 
     std::vector<DeltaEntry>::iterator insertEntry(Addr pc, Addr blk_addr, MasterID master_id);
-    std::vector<DeltaEntry>::iterator addressListEnd(std::vector<DeltaEntry>::iterator it, MasterID master_id);
-    std::vector<DeltaEntry>::iterator deltaCorrelation(std::vector<DeltaEntry>::iterator entry, MasterID master_id);
-    std::pair<bool, long long> getPreviousDelta(std::vector<DeltaEntry>::iterator it, MasterID master_id);
+    std::vector<DeltaEntry>::iterator addressListEnd(std::vector<DeltaEntry>::iterator it, std::vector<DeltaEntry>::iterator end_it);
+    std::vector<long long> deltaCorrelation(std::vector<DeltaEntry>::iterator entry, MasterID master_id);
 
   public:
     GHBPrefetcher(const Params *p)
